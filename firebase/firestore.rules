@@ -1,0 +1,157 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true;
+    }
+
+    function allowedPackage(packageName) {
+      return packageName == 'gr.cardbalance.app' ||
+        packageName == 'gr.cardbalance.web';
+    }
+
+    function validOptionalPlatform() {
+      return !request.resource.data.keys().hasAny(['clientPlatform']) ||
+        (request.resource.data.clientPlatform == 'WEB' &&
+         request.resource.data.packageName == 'gr.cardbalance.web');
+    }
+
+    function validClientRequestCreate() {
+      return signedIn() &&
+        request.auth.token.email_verified == true &&
+        request.resource.data.keys().hasOnly([
+          'appName', 'packageName', 'versionName', 'versionCode',
+          'userEnteredName', 'email', 'normalizedEmail', 'uid', 'installationId',
+          'manufacturer', 'model', 'commercialName', 'androidVersion', 'sdkLevel', 'requestedAt',
+          'status', 'approvedAt', 'rejectedAt', 'revokedAt',
+          'lastAdminActionAt', 'lastAdminUid', 'lastAuditId',
+          'previousRequestId', 'previousDevice', 'indicators', 'indicatorsSource',
+          'clientPlatform', 'authProvider'
+        ]) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.email == request.auth.token.email &&
+        request.resource.data.normalizedEmail is string &&
+        request.resource.data.userEnteredName is string &&
+        request.resource.data.userEnteredName.size() > 0 &&
+        request.resource.data.userEnteredName.size() <= 100 &&
+        request.resource.data.installationId is string &&
+        request.resource.data.installationId.matches(
+          '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+        ) &&
+        allowedPackage(request.resource.data.packageName) &&
+        validOptionalPlatform() &&
+        (!request.resource.data.keys().hasAny(['authProvider']) ||
+          (request.resource.data.authProvider is string &&
+           request.resource.data.authProvider in ['GOOGLE', 'EMAIL_LINK', 'EMAIL_PASSWORD'])) &&
+        request.resource.data.requestedAt == request.time &&
+        request.resource.data.status == 'PENDING' &&
+        request.resource.data.approvedAt == null &&
+        request.resource.data.rejectedAt == null &&
+        request.resource.data.revokedAt == null &&
+        request.resource.data.lastAdminActionAt == null &&
+        request.resource.data.lastAdminUid == null &&
+        request.resource.data.lastAuditId == null &&
+        request.resource.data.indicators is list &&
+        request.resource.data.indicators.size() <= 5 &&
+        request.resource.data.indicators.hasOnly([
+          'NEW_DEVICE', 'NAME_CHANGED', 'NEW_INSTALL_SAME_DEVICE',
+          'PREVIOUSLY_REJECTED', 'PREVIOUSLY_REVOKED'
+        ]) &&
+        request.resource.data.indicatorsSource == 'CLIENT_HEURISTIC';
+    }
+
+    function validStatusTransition() {
+      return
+        (resource.data.status == 'PENDING' &&
+          (request.resource.data.status == 'APPROVED' ||
+           request.resource.data.status == 'REJECTED')) ||
+        (resource.data.status == 'APPROVED' &&
+          request.resource.data.status == 'REVOKED') ||
+        (resource.data.status == 'REJECTED' &&
+          request.resource.data.status == 'APPROVED') ||
+        (resource.data.status == 'REVOKED' &&
+          request.resource.data.status == 'APPROVED');
+    }
+
+    function validAdminTimestamp() {
+      return
+        (request.resource.data.status == 'APPROVED' &&
+          request.resource.data.approvedAt == request.time) ||
+        (request.resource.data.status == 'REJECTED' &&
+          request.resource.data.rejectedAt == request.time) ||
+        (request.resource.data.status == 'REVOKED' &&
+          request.resource.data.revokedAt == request.time);
+    }
+
+    function validAdminUpdate(requestId) {
+      let auditId = request.resource.data.lastAuditId;
+      let auditPath = /databases/$(database)/documents/auditLog/$(auditId);
+      let audit = getAfter(auditPath);
+      return isAdmin() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'approvedAt', 'rejectedAt', 'revokedAt',
+          'lastAdminActionAt', 'lastAdminUid', 'lastAuditId'
+        ]) &&
+        validStatusTransition() &&
+        validAdminTimestamp() &&
+        request.resource.data.lastAdminActionAt == request.time &&
+        request.resource.data.lastAdminUid == request.auth.uid &&
+        auditId is string &&
+        existsAfter(auditPath) &&
+        audit.data.requestId == requestId &&
+        audit.data.previousStatus == resource.data.status &&
+        audit.data.newStatus == request.resource.data.status &&
+        audit.data.adminUid == request.auth.uid &&
+        audit.data.actionAt == request.time;
+    }
+
+    match /installationRequests/{requestId} {
+      allow get: if signedIn() &&
+        (resource.data.uid == request.auth.uid || isAdmin());
+      allow list: if signedIn() &&
+        (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if validClientRequestCreate();
+      allow update: if validAdminUpdate(requestId);
+      allow delete: if false;
+    }
+
+    match /admins/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /auditLog/{auditId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'requestId', 'installationId', 'subjectUid', 'previousStatus',
+          'newStatus', 'actionAt', 'adminUid', 'adminEmail'
+        ]) &&
+        request.resource.data.adminUid == request.auth.uid &&
+        request.resource.data.adminEmail == request.auth.token.email &&
+        request.resource.data.actionAt == request.time &&
+        request.resource.data.installationId == getAfter(
+          /databases/$(database)/documents/installationRequests/$(request.resource.data.requestId)
+        ).data.installationId &&
+        request.resource.data.subjectUid == getAfter(
+          /databases/$(database)/documents/installationRequests/$(request.resource.data.requestId)
+        ).data.uid &&
+        getAfter(
+          /databases/$(database)/documents/installationRequests/$(request.resource.data.requestId)
+        ).data.lastAuditId == auditId;
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,6 +1,20 @@
 name: Deploy Card Balance PWA
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy.yml'
+      - 'functions/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - 'vite.config.ts'
   workflow_dispatch:
 
 permissions:
@@ -13,67 +27,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      VITE_BASE_PATH: /card-balance/
+      VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+      VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+      VITE_BALANCE_API_PATH: ${{ vars.VITE_BALANCE_API_PATH }}
     steps:
-      - name: Checkout repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Extract and adapt PWA
+      - name: Validate deployment configuration
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import json, zipfile
+          required=(
+            VITE_FIREBASE_API_KEY
+            VITE_FIREBASE_AUTH_DOMAIN
+            VITE_FIREBASE_PROJECT_ID
+            VITE_FIREBASE_STORAGE_BUCKET
+            VITE_FIREBASE_MESSAGING_SENDER_ID
+            VITE_FIREBASE_APP_ID
+            VITE_BALANCE_API_PATH
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing GitHub environment variable: $name" >&2
+              exit 1
+            fi
+          done
 
-          archive = Path('V0.2.0_Web_CardBalancePWA.zip')
-          if not archive.is_file():
-              raise SystemExit(f'Missing archive: {archive}')
-          out = Path('site')
-          out.mkdir(exist_ok=True)
-          with zipfile.ZipFile(archive) as z:
-              for item in z.infolist():
-                  name = item.filename.removeprefix('./')
-                  if not name or item.is_dir():
-                      continue
-                  target = out / name
-                  if not target.resolve().is_relative_to(out.resolve()):
-                      raise SystemExit('Unsafe ZIP path')
-                  target.parent.mkdir(parents=True, exist_ok=True)
-                  target.write_bytes(z.read(item))
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
 
-          base = '/card-balance/'
-          index = out / 'index.html'
-          html = index.read_text(encoding='utf-8')
-          for prefix in ('/assets/', '/icon.svg', '/manifest.webmanifest'):
-              html = html.replace('"' + prefix, '"' + base + prefix.lstrip('/'))
-          index.write_text(html, encoding='utf-8')
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
-          manifest_path = out / 'manifest.webmanifest'
-          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-          manifest['start_url'] = base
-          manifest['scope'] = base
-          for icon in manifest.get('icons', []):
-              icon['src'] = base + icon['src'].lstrip('/')
-          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
 
-          sw = out / 'sw.js'
-          worker = sw.read_text(encoding='utf-8')
-          worker = worker.replace('createHandlerBoundToURL("/index.html")', 'createHandlerBoundToURL("/card-balance/index.html")')
-          sw.write_text(worker, encoding='utf-8')
+      - name: Type check
+        run: pnpm typecheck
 
-          js = out / 'assets/index-BPlnKZjo.js'
-          bundle = js.read_text(encoding='utf-8')
-          old = 'new J("/sw.js",{scope:"/",type:"classic"})'
-          new = 'new J("/card-balance/sw.js",{scope:"/card-balance/",type:"classic"})'
-          if old not in bundle:
-              raise SystemExit('Service Worker registration pattern not found')
-          js.write_text(bundle.replace(old, new), encoding='utf-8')
-          (out / '.nojekyll').touch()
-          PY
+      - name: Build PWA
+        run: pnpm build
+
+      - name: Verify generated PWA
+        run: pnpm verify:dist
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -81,8 +94,8 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: dist
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
