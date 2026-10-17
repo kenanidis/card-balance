@@ -92,7 +92,15 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       cf: { cacheTtl: 0 }
     }
     const response = await fetch(upstream, upstreamOptions)
-    if (!response.ok) return json({ error: 'Η υπηρεσία υπολοίπου δεν είναι διαθέσιμη.' }, 502, origin)
+    if (!response.ok) {
+      console.error('balance-upstream-response', {
+        status: response.status,
+        redirected: response.redirected,
+        hasLocation: response.headers.has('Location'),
+        contentType: response.headers.get('Content-Type') || ''
+      })
+      return json({ error: 'Η υπηρεσία υπολοίπου δεν είναι διαθέσιμη.' }, 502, origin)
+    }
     const upstreamBody = await response.json() as Record<string, unknown>
     const raw = upstreamBody.CurrentPrePaidLimit ?? upstreamBody.currentPrePaidLimit
     const amount = typeof raw === 'number' ? raw : Number(String(raw).replace(',', '.'))
