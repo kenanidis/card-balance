@@ -311,7 +311,7 @@ function App() {
         <input ref={fileRef} hidden type="file" accept="application/json" onChange={event => { const file = event.target.files?.[0]; if (file) void importBackup(file).then(history => setState(current => ({ ...current, history }))).catch(error => setMessage(String(error))) }} />
         <button className="secondary" onClick={() => setState(current => ({ ...current, termsAccepted: false }))}>Προβολή όρων</button>
         <button className="danger" onClick={() => { if (window.confirm('Να διαγραφούν όλα τα τοπικά δεδομένα;')) void clearLocalData().then(() => location.reload()) }}>Διαγραφή τοπικών δεδομένων</button>
-        <p className="muted">Web έκδοση 0.3.2</p>
+        <p className="muted">Web έκδοση 0.3.3</p>
       </section>}
       {message && <div className="toast" role="status" onClick={() => setMessage('')}>{message}</div>}
     </main>
