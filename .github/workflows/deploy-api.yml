@@ -23,6 +23,11 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
       - name: Deploy Cloudflare Pages Functions
         uses: cloudflare/wrangler-action@v3
         with:
