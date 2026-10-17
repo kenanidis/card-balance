@@ -25,6 +25,16 @@ const euro = new Intl.NumberFormat('el-GR', { style: 'currency', currency: 'EUR'
 const dateTime = new Intl.DateTimeFormat('el-GR', { dateStyle: 'short', timeStyle: 'short' })
 const appIcon = `${import.meta.env.BASE_URL}icon.svg`
 
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
+}
+
+function runsAsInstalledApp(): boolean {
+  return window.matchMedia('(display-mode: standalone)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+}
+
 function App() {
   const [state, setState] = useState<LocalState>(structuredClone(EMPTY_STATE))
   const [loaded, setLoaded] = useState(false)
@@ -39,11 +49,32 @@ function App() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [emailLinkCompletion, setEmailLinkCompletion] = useState(false)
+  const [showInstallGuide, setShowInstallGuide] = useState(false)
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const isIos = /iPad|iPhone|iPod/i.test(navigator.userAgent)
+  const isAndroid = /Android/i.test(navigator.userAgent)
 
   useEffect(() => {
     void loadState().then(value => setState(value)).catch(error => setMessage(String(error))).finally(() => setLoaded(true))
     return observeUser(setUser)
+  }, [])
+
+  useEffect(() => {
+    const capturePrompt = (event: Event) => {
+      event.preventDefault()
+      setInstallPrompt(event as InstallPromptEvent)
+    }
+    const installed = () => {
+      setInstallPrompt(null)
+      setShowInstallGuide(false)
+    }
+    window.addEventListener('beforeinstallprompt', capturePrompt)
+    window.addEventListener('appinstalled', installed)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', capturePrompt)
+      window.removeEventListener('appinstalled', installed)
+    }
   }, [])
 
   useEffect(() => {
@@ -130,16 +161,33 @@ function App() {
     }
   }
 
-  async function requestApproval() {
+  async function submitApproval() {
     if (!user || !name.trim()) return setMessage('Συμπληρώστε το όνομά σας.')
     setBusy(true)
     try {
       await createApprovalRequest(user, name)
-      setMessage('Το αίτημα έγκρισης καταχωρίστηκε.')
+      setMessage('Το αίτημα πρόσβασης στάλθηκε. Παρακαλώ δοκιμάστε αργότερα εφόσον έχει εγκριθεί.')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     } finally {
       setBusy(false)
+    }
+  }
+
+  function beginApprovalRequest() {
+    if (!user || !name.trim()) return setMessage('Συμπληρώστε το όνομά σας.')
+    if (runsAsInstalledApp()) void submitApproval()
+    else setShowInstallGuide(true)
+  }
+
+  async function installAndSubmit() {
+    if (!installPrompt) return
+    await installPrompt.prompt()
+    const choice = await installPrompt.userChoice
+    setInstallPrompt(null)
+    if (choice.outcome === 'accepted') {
+      setShowInstallGuide(false)
+      await submitApproval()
     }
   }
 
@@ -203,12 +251,30 @@ function App() {
         <p className="account">{user.email}</p>
         {approval === 'NONE' && <>
           <label>Ονοματεπώνυμο<input value={name} maxLength={100} onChange={event => setName(event.target.value)} /></label>
-          <button disabled={busy} onClick={() => void requestApproval()}>Αποστολή αιτήματος</button>
+          <button disabled={busy} onClick={beginApprovalRequest}>Αποστολή αιτήματος</button>
         </>}
         {approval !== 'NONE' && <div className={`notice status-${approval.toLowerCase()}`}>Κατάσταση: {approval}</div>}
         <button className="secondary" onClick={() => void logout()}>Αποσύνδεση</button>
       </>}
       {message && <div className="notice warning">{message}</div>}
+      {showInstallGuide && <div className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title">
+        <section>
+          <h2 id="install-title">Εγκατάσταση εφαρμογής</h2>
+          <p>Για ευκολότερη και πιο αξιόπιστη χρήση, συνιστάται να εγκαταστήσετε το Card Balance στη συσκευή σας πριν στείλετε το αίτημα πρόσβασης.</p>
+          {isIos ? <div className="install-steps">
+            <strong>iPhone ή iPad — Safari</strong>
+            <ol><li>Πατήστε το κουμπί <b>Κοινοποίηση</b>.</li><li>Επιλέξτε <b>Προσθήκη στην οθόνη Αφετηρίας</b>.</li><li>Πατήστε <b>Προσθήκη</b>.</li></ol>
+          </div> : <div className="install-steps">
+            <strong>{isAndroid ? 'Android — Chrome' : 'Υπολογιστής ή άλλος browser'}</strong>
+            <p>{installPrompt ? 'Πατήστε «Εγκατάσταση τώρα» και επιβεβαιώστε την εγκατάσταση.' : 'Ανοίξτε το μενού του browser και επιλέξτε «Εγκατάσταση εφαρμογής» ή «Προσθήκη στην αρχική οθόνη».'}</p>
+          </div>}
+          <div className="install-actions">
+            {installPrompt && <button disabled={busy} onClick={() => void installAndSubmit()}>Εγκατάσταση τώρα</button>}
+            <button className="secondary" disabled={busy} onClick={() => { setShowInstallGuide(false); void submitApproval() }}>Συνέχεια χωρίς εγκατάσταση</button>
+            <button className="text-button" disabled={busy} onClick={() => setShowInstallGuide(false)}>Άκυρο</button>
+          </div>
+        </section>
+      </div>}
     </section></main>
   )
 
@@ -245,7 +311,7 @@ function App() {
         <input ref={fileRef} hidden type="file" accept="application/json" onChange={event => { const file = event.target.files?.[0]; if (file) void importBackup(file).then(history => setState(current => ({ ...current, history }))).catch(error => setMessage(String(error))) }} />
         <button className="secondary" onClick={() => setState(current => ({ ...current, termsAccepted: false }))}>Προβολή όρων</button>
         <button className="danger" onClick={() => { if (window.confirm('Να διαγραφούν όλα τα τοπικά δεδομένα;')) void clearLocalData().then(() => location.reload()) }}>Διαγραφή τοπικών δεδομένων</button>
-        <p className="muted">Web έκδοση 0.3.0</p>
+        <p className="muted">Web έκδοση 0.3.1</p>
       </section>}
       {message && <div className="toast" role="status" onClick={() => setMessage('')}>{message}</div>}
     </main>

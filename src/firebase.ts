@@ -165,8 +165,8 @@ export async function createApprovalRequest(user: User, enteredName: string): Pr
   await setDoc(doc(collection(db, 'installationRequests'), requestId), {
     appName: 'Card Balance Web',
     packageName: 'gr.cardbalance.web',
-    versionName: '0.3.0',
-    versionCode: 3,
+    versionName: '0.3.1',
+    versionCode: 4,
     userEnteredName: enteredName.trim(),
     email: user.email,
     normalizedEmail: user.email?.trim().toLowerCase(),

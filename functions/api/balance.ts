@@ -68,8 +68,7 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
     const authorization = context.request.headers.get('Authorization') || ''
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : ''
     if (!token) return json({ error: 'Απαιτείται σύνδεση.' }, 401, origin)
-    const projectId = context.env.FIREBASE_PROJECT_ID
-    if (!projectId) return json({ error: 'Ο διακομιστής δεν έχει ρυθμιστεί.' }, 503, origin)
+    const projectId = context.env.FIREBASE_PROJECT_ID || 'card-balance-2cdf0'
     const { payload } = await jwtVerify(token, FIREBASE_KEYS, {
       issuer: `https://securetoken.google.com/${projectId}`,
       audience: projectId
