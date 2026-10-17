@@ -2,7 +2,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose'
 
 interface Env {
   FIREBASE_PROJECT_ID: string
-  BALANCE_UPSTREAM_URL?: string
+  BALANCE_BRIDGE_URL?: string
   ALLOWED_ORIGIN?: string
   BALANCE_RATE_LIMITER?: {
     limit(options: { key: string }): Promise<{ success: boolean }>
@@ -83,25 +83,33 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
     if (!body.cardNumber || !/^\d{1,30}$/.test(body.cardNumber)) return json({ error: 'Ελέγξτε τον αριθμό διατακτικής.' }, 400, origin)
     if (!body.extraCode || !/^\d{6}$/.test(body.extraCode)) return json({ error: 'Ο κωδικός πρέπει να έχει 6 ψηφία.' }, 400, origin)
     if (!await approved(body.requestId, token, projectId, payload.sub)) return json({ error: 'Η εγκατάσταση δεν είναι εγκεκριμένη.' }, 403, origin)
-    const upstream = context.env.BALANCE_UPSTREAM_URL || 'https://vouchercards.ab.gr/api/Balance/CheckBalance'
+    const upstream = context.env.BALANCE_BRIDGE_URL || 'https://script.google.com/macros/s/AKfycbz167NOzJwFzSHaauHBkI8Tsw2pSi9lVV4cf2djpT7LOs80xD4Cd-cFTtU5jhd4CRJW/exec'
     const upstreamOptions: CloudflareRequestInit = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ cardCode: body.cardNumber, extraCode: body.extraCode }),
-      redirect: 'manual',
+      body: JSON.stringify({
+        action: 'balance',
+        requestId: body.requestId,
+        idToken: token,
+        cardNumber: body.cardNumber,
+        extraCode: body.extraCode
+      }),
+      redirect: 'follow',
       cf: { cacheTtl: 0 }
     }
     const response = await fetch(upstream, upstreamOptions)
-    if (!response.ok) {
-      console.error('balance-upstream-response', {
-        status: response.status,
-        redirected: response.redirected,
-        hasLocation: response.headers.has('Location'),
-        contentType: response.headers.get('Content-Type') || ''
-      })
+    if (!response.ok) return json({ error: 'Η υπηρεσία υπολοίπου δεν είναι διαθέσιμη.' }, 502, origin)
+    const bridgeBody = await response.json() as {
+      ok?: boolean
+      error?: string
+      result?: Record<string, unknown>
+    }
+    if (!bridgeBody.ok || !bridgeBody.result) {
+      if (bridgeBody.error === 'not_approved') return json({ error: 'Η εγκατάσταση δεν είναι εγκεκριμένη.' }, 403, origin)
+      if (bridgeBody.error === 'invalid_request') return json({ error: 'Μη έγκυρο αίτημα.' }, 400, origin)
       return json({ error: 'Η υπηρεσία υπολοίπου δεν είναι διαθέσιμη.' }, 502, origin)
     }
-    const upstreamBody = await response.json() as Record<string, unknown>
+    const upstreamBody = bridgeBody.result
     const raw = upstreamBody.CurrentPrePaidLimit ?? upstreamBody.currentPrePaidLimit
     const amount = typeof raw === 'number' ? raw : Number(String(raw).replace(',', '.'))
     if (!Number.isFinite(amount)) return json({ error: 'Μη αναμενόμενη απάντηση υπηρεσίας.' }, 502, origin)

@@ -1,7 +1,7 @@
 {
   "name": "card-balance-web",
   "private": true,
-  "version": "0.3.4",
+  "version": "0.3.5",
   "packageManager": "pnpm@11.19.0",
   "type": "module",
   "scripts": {
