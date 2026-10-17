@@ -1,0 +1,88 @@
+name: Deploy Card Balance PWA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract and adapt PWA
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, zipfile
+
+          archive = Path('V0.2.0_Web_CardBalancePWA.zip')
+          if not archive.is_file():
+              raise SystemExit(f'Missing archive: {archive}')
+          out = Path('site')
+          out.mkdir(exist_ok=True)
+          with zipfile.ZipFile(archive) as z:
+              for item in z.infolist():
+                  name = item.filename.removeprefix('./')
+                  if not name or item.is_dir():
+                      continue
+                  target = out / name
+                  if not target.resolve().is_relative_to(out.resolve()):
+                      raise SystemExit('Unsafe ZIP path')
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(z.read(item))
+
+          base = '/card-balance/'
+          index = out / 'index.html'
+          html = index.read_text(encoding='utf-8')
+          for prefix in ('/assets/', '/icon.svg', '/manifest.webmanifest'):
+              html = html.replace('"' + prefix, '"' + base + prefix.lstrip('/'))
+          index.write_text(html, encoding='utf-8')
+
+          manifest_path = out / 'manifest.webmanifest'
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          manifest['start_url'] = base
+          manifest['scope'] = base
+          for icon in manifest.get('icons', []):
+              icon['src'] = base + icon['src'].lstrip('/')
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
+
+          sw = out / 'sw.js'
+          worker = sw.read_text(encoding='utf-8')
+          worker = worker.replace('createHandlerBoundToURL("/index.html")', 'createHandlerBoundToURL("/card-balance/index.html")')
+          sw.write_text(worker, encoding='utf-8')
+
+          js = out / 'assets/index-BPlnKZjo.js'
+          bundle = js.read_text(encoding='utf-8')
+          old = 'new J("/sw.js",{scope:"/",type:"classic"})'
+          new = 'new J("/card-balance/sw.js",{scope:"/card-balance/",type:"classic"})'
+          if old not in bundle:
+              raise SystemExit('Service Worker registration pattern not found')
+          js.write_text(bundle.replace(old, new), encoding='utf-8')
+          (out / '.nojekyll').touch()
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
