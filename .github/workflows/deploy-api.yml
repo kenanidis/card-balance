@@ -1,0 +1,31 @@
+name: Deploy Card Balance API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "functions/**"
+      - "cloudflare-public/**"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: card-balance-api-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Deploy Cloudflare Pages Functions
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy cloudflare-public --project-name=card-balance-api --branch=main
