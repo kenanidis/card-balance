@@ -1,15 +1,8 @@
 name: Deploy Card Balance API
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "functions/**"
-      - "cloudflare-public/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/deploy-api.yml"
+  # The public balance API deployment is retired. Keep the workflow available
+  # only for an explicit manual run if the project is resumed in the future.
   workflow_dispatch:
 
 permissions:

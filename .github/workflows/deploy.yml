@@ -1,20 +1,8 @@
 name: Deploy Card Balance PWA
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/deploy.yml'
-      - 'functions/**'
-      - 'public/**'
-      - 'scripts/**'
-      - 'src/**'
-      - 'index.html'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'tsconfig*.json'
-      - 'vite.config.ts'
+  # The public Web/PWA deployment is retired. Keep the workflow available only
+  # for an explicit manual run if the project is resumed in the future.
   workflow_dispatch:
 
 permissions:
