@@ -6,6 +6,9 @@ on:
     paths:
       - "functions/**"
       - "cloudflare-public/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/deploy-api.yml"
   workflow_dispatch:
 
