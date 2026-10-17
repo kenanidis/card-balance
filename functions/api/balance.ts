@@ -64,6 +64,7 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
   const allowedOrigin = context.env.ALLOWED_ORIGIN || 'https://kenanidis.github.io'
   const origin = context.request.headers.get('Origin') || ''
   if (origin !== allowedOrigin) return json({ error: 'Μη επιτρεπτή προέλευση.' }, 403)
+  let stage = 'authenticate'
   try {
     const authorization = context.request.headers.get('Authorization') || ''
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : ''
@@ -75,13 +76,16 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
     })
     if (!payload.sub) return json({ error: 'Μη έγκυρη ταυτότητα.' }, 401, origin)
     if (context.env.BALANCE_RATE_LIMITER) {
+      stage = 'rate-limit'
       const { success } = await context.env.BALANCE_RATE_LIMITER.limit({ key: payload.sub })
       if (!success) return json({ error: 'Έγιναν πολλές προσπάθειες. Δοκιμάστε ξανά σε λίγο.' }, 429, origin)
     }
+    stage = 'request-validation'
     const body = await context.request.json() as BalanceRequest
     if (!body.requestId || !/^[a-f0-9]{64}$/.test(body.requestId)) return json({ error: 'Μη έγκυρο αίτημα.' }, 400, origin)
     if (!body.cardNumber || !/^\d{1,30}$/.test(body.cardNumber)) return json({ error: 'Ελέγξτε τον αριθμό διατακτικής.' }, 400, origin)
     if (!body.extraCode || !/^\d{6}$/.test(body.extraCode)) return json({ error: 'Ο κωδικός πρέπει να έχει 6 ψηφία.' }, 400, origin)
+    stage = 'approval-check'
     if (!await approved(body.requestId, token, projectId, payload.sub)) return json({ error: 'Η εγκατάσταση δεν είναι εγκεκριμένη.' }, 403, origin)
     const upstream = context.env.BALANCE_UPSTREAM_URL || 'https://vouchercards.ab.gr/api/Balance/CheckBalance'
     const upstreamOptions: CloudflareRequestInit = {
@@ -91,16 +95,22 @@ export async function onRequestPost(context: PagesContext): Promise<Response> {
       redirect: 'error',
       cf: { cacheTtl: 0 }
     }
+    stage = 'upstream-request'
     const response = await fetch(upstream, upstreamOptions)
     if (!response.ok) return json({ error: 'Η υπηρεσία υπολοίπου δεν είναι διαθέσιμη.' }, 502, origin)
+    stage = 'upstream-response'
     const upstreamBody = await response.json() as Record<string, unknown>
     const raw = upstreamBody.CurrentPrePaidLimit ?? upstreamBody.currentPrePaidLimit
     const amount = typeof raw === 'number' ? raw : Number(String(raw).replace(',', '.'))
     if (!Number.isFinite(amount)) return json({ error: 'Μη αναμενόμενη απάντηση υπηρεσίας.' }, 502, origin)
     const cents = Math.round(amount * 100)
     return json({ cents, formatted: new Intl.NumberFormat('el-GR', { style: 'currency', currency: 'EUR' }).format(cents / 100) }, 200, origin)
-  } catch {
-    return json({ error: 'Ο έλεγχος υπολοίπου απέτυχε.' }, 500, origin)
+  } catch (error) {
+    const diagnostic = error instanceof Error
+      ? { name: error.name, message: error.message.slice(0, 300) }
+      : { name: 'UnknownError', message: 'No error details' }
+    console.error('balance-api-failure', { stage, ...diagnostic })
+    return json({ error: 'Ο έλεγχος υπολοίπου απέτυχε.', reference: stage }, 500, origin)
   }
 }
 
